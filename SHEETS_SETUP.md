@@ -26,9 +26,19 @@ Google Apps Script Web App bound to your own Sheet.
 2. Replace `PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE` with the URL you copied.
 3. Redeploy the site (push to the repo Vercel is watching).
 
-That's it — submissions now write to your Sheet. A visit that never
-finishes stays a single **Incomplete** (light/red) row; finishing the form
-updates that same row to **Complete** (green) — no duplicates.
+That's it — submissions now write to your Sheet. The row updates after
+every question the person answers (so a visit that drops off halfway still
+leaves whatever they'd filled in so far, marked **Incomplete** /
+light-red); finishing the form updates that same row to **Complete**
+(green) — no duplicates either way.
+
+## Updating the script later
+Editing `google-apps-script.gs` in the Apps Script editor does **not**
+change your live `/exec` URL by itself. To push a code update to the same
+URL: Deploy → Manage deployments → pick your Web app deployment → edit
+(pencil icon) → Version: **New version** → Deploy. (Deploy → New
+deployment instead would mint a *different* URL, requiring another
+submit.js update — only do that if you actually want a new endpoint.)
 
 ## 4. Trackable links
 `vercel.json` already rewrites every path to the form, so

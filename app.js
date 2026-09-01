@@ -74,7 +74,6 @@ var FormApp = (function () {
     this._niceT = null;
     this._lastStepKey = null;
     this._lastPct = null;
-    this._startSent = false;
     this.root.addEventListener("click", this.handleClick.bind(this));
     this.render();
     this.maybeAutoAdvance();
@@ -249,9 +248,9 @@ var FormApp = (function () {
   P.restart = function () {
     clearTimeout(this._autoT);
     clearTimeout(this._niceT);
-    this._startSent = false;
     this._lastStepKey = null;
     this._lastPct = null;
+    if (window.Submission) window.Submission.resetSession();
     this.setState({ steps: buildInitialSteps(), stepIndex: 0, answers: {}, niceOneLabel: null });
   };
 
@@ -315,9 +314,14 @@ var FormApp = (function () {
           requestAnimationFrame(function () { fillEl.style.width = pct + "%"; });
         });
       }
-      if (step.kind === "question" && !this._startSent) {
-        this._startSent = true;
-        if (window.Submission) window.Submission.send("Incomplete", {}, null);
+      // Re-sync the sheet row with whatever's been answered so far on every
+      // new question — so a user who drops off halfway still leaves their
+      // partial answers behind, not just a blank Incomplete row. finishFinal()
+      // sends the terminal "Complete" ping itself; the Apps Script side never
+      // lets a later "Incomplete" ping downgrade an already-Complete row, so
+      // this can't race a fast Finish click into reverting the status.
+      if (window.Submission && (step.kind === "question" || step.kind === "names" || step.kind === "final")) {
+        window.Submission.send("Incomplete", s.answers, s.answers.checkpoint);
       }
     }
   };

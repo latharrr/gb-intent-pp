@@ -90,6 +90,7 @@ function doPost(e) {
     var rowValues = ALL_FIELDS.map(function (f) { return fieldValue(f[0], body); });
 
     var sessionCol = 2; // Session ID is column B
+    var statusCol = 3;  // Status is column C
     var lastRow = sheet.getLastRow();
     var rowIndex = -1;
     if (lastRow > 1) {
@@ -98,8 +99,19 @@ function doPost(e) {
         if (ids[i][0] === body.session_id) { rowIndex = i + 2; break; }
       }
     }
-    if (rowIndex === -1) sheet.appendRow(rowValues);
-    else sheet.getRange(rowIndex, 1, 1, rowValues.length).setValues([rowValues]);
+    if (rowIndex === -1) {
+      sheet.appendRow(rowValues);
+    } else {
+      // A progress ping ("Incomplete") that arrives after the completion
+      // ping — e.g. a slow request that lands out of order — must never
+      // revert an already-Complete row back to Incomplete.
+      var existingStatus = sheet.getRange(rowIndex, statusCol).getValue();
+      if (existingStatus === "Complete" && body.status === "Incomplete") {
+        return ContentService.createTextOutput(JSON.stringify({ ok: true, skipped: "already complete" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      sheet.getRange(rowIndex, 1, 1, rowValues.length).setValues([rowValues]);
+    }
 
     return ContentService.createTextOutput(JSON.stringify({ ok: true }))
       .setMimeType(ContentService.MimeType.JSON);

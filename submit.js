@@ -13,14 +13,18 @@ var SHEETS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbywOF6A--aNpz
     return !!SHEETS_ENDPOINT_URL && SHEETS_ENDPOINT_URL.indexOf("PASTE_YOUR_") === -1;
   }
 
+  function newId() {
+    return (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : "id-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+  }
+
   function getSessionId() {
     try {
       var existing = sessionStorage.getItem("pp_session_id");
       if (existing) return existing;
     } catch (e) {}
-    var id = (window.crypto && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : "id-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+    var id = newId();
     try { sessionStorage.setItem("pp_session_id", id); } catch (e) {}
     return id;
   }
@@ -70,12 +74,14 @@ var SHEETS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbywOF6A--aNpz
   window.Submission = {
     sessionId: sessionId,
     sourceSlug: sourceSlug,
-    // status: "Incomplete" (sent once, on reaching the first question) or
-    // "Complete" (sent on Finish) — Apps Script upserts by session_id, so
-    // the Complete call overwrites the Incomplete row rather than duplicating it.
+    // status: "Incomplete" (sent on every new question reached, so a
+    // drop-off keeps whatever was answered so far) or "Complete" (sent on
+    // Finish). Apps Script upserts by session_id — same row keeps
+    // updating, no duplicates — and never lets an Incomplete ping
+    // downgrade a row that's already Complete.
     send: function (status, answers, checkpoint) {
       var payload = {
-        session_id: sessionId,
+        session_id: this.sessionId,
         status: status,
         source: sourceSlug,
         page_url: location.href,
@@ -90,6 +96,13 @@ var SHEETS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbywOF6A--aNpz
         payload.ip = ip;
         postToSheet(payload);
       });
+    },
+    // Call after a completed fill ("Fill it again") so the next pass writes
+    // a new row instead of overwriting the just-completed one.
+    resetSession: function () {
+      var id = newId();
+      try { sessionStorage.setItem("pp_session_id", id); } catch (e) {}
+      this.sessionId = id;
     },
   };
 })();
