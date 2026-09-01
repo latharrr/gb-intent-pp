@@ -1,7 +1,7 @@
 // PicaPool intent form — state machine + renderer.
-// Ported behavior (interaction rules, one-question-at-a-time, skip/multi/other/
-// end-now semantics) from PicaPool Intent Form.dc.html, rendered as plain DOM
-// instead of through the design tool's runtime.
+// Multi-select brand pickers (with opt-out mutual exclusivity), a required
+// mobile number at the name checkpoint, lightweight entrance/selection
+// animations, and hooks into submit.js for the Google Sheets backend.
 "use strict";
 
 var ACCENT = "#C1602F";
@@ -38,7 +38,7 @@ function topRowHtml(showBack, showEndNow, pct) {
   );
 }
 
-function optionTileStyle(step, opt, selected, stacked) {
+function optionTileStyle(step, opt, selected, stacked, animDelay) {
   var quiet = opt.optOut && !selected;
   var borderColor = selected ? (opt.optOut ? "rgba(43,38,33,0.32)" : ACCENT) : (quiet ? "rgba(43,38,33,0.10)" : "rgba(43,38,33,0.15)");
   var bg = selected ? (opt.optOut ? "rgba(43,38,33,0.05)" : hexToSoft(ACCENT, 0.1)) : "#FFFDF8";
@@ -48,16 +48,17 @@ function optionTileStyle(step, opt, selected, stacked) {
   var pad = stacked ? "26px 14px" : "16px 18px";
   var radius = stacked ? 20 : 16;
   var flexBasis = step.layout === "grid2" ? "calc(50% - 6px)" : step.layout === "grid3" ? "calc(33.333% - 8px)" : "100%";
-  return "flex:0 0 " + flexBasis + ";display:flex;flex-direction:" + dir + ";align-items:center;justify-content:" + justify +
+  var style = "flex:0 0 " + flexBasis + ";display:flex;flex-direction:" + dir + ";align-items:center;justify-content:" + justify +
     ";gap:8px;padding:" + pad + ";border-radius:" + radius + "px;border:" + (selected ? 2 : 1.5) + "px solid " + borderColor +
     ";background:" + bg + ";color:" + textColor + ";font-weight:" + (selected ? 600 : 500) +
     ";text-align:" + (stacked ? "center" : "left") + ";";
+  if (animDelay != null) style += "animation:tileIn .32s cubic-bezier(.22,1,.36,1) both;animation-delay:" + animDelay + "ms;";
+  return style;
 }
 
 function optionCheckStyle(stacked) {
-  return stacked
-    ? "position:absolute;top:10px;right:10px;color:#fff;background:" + ACCENT + ";border-radius:999px;padding:3px;width:16px;height:16px;box-sizing:border-box;"
-    : "color:#fff;background:" + ACCENT + ";border-radius:999px;padding:3px;width:16px;height:16px;flex-shrink:0;box-sizing:border-box;";
+  var base = "color:#fff;background:" + ACCENT + ";border-radius:999px;padding:3px;width:16px;height:16px;box-sizing:border-box;animation:checkPop .28s cubic-bezier(.34,1.56,.64,1) both;";
+  return stacked ? "position:absolute;top:10px;right:10px;" + base : "flex-shrink:0;" + base;
 }
 
 var FormApp = (function () {
@@ -67,12 +68,13 @@ var FormApp = (function () {
       steps: buildInitialSteps(),
       stepIndex: 0,
       answers: {},
-      pendingOtherStep: null,
-      pendingOtherOption: null,
       niceOneLabel: null,
     };
     this._autoT = null;
     this._niceT = null;
+    this._lastStepKey = null;
+    this._lastPct = null;
+    this._startSent = false;
     this.root.addEventListener("click", this.handleClick.bind(this));
     this.render();
     this.maybeAutoAdvance();
@@ -86,10 +88,6 @@ var FormApp = (function () {
     Object.assign(this.state, partial);
     this.render();
     if (this.state.stepIndex !== prevIndex) this.maybeAutoAdvance();
-  };
-
-  P.getStep = function (key) {
-    return this.state.steps.find(function (s) { return s.key === key; });
   };
 
   P.maybeAutoAdvance = function () {
@@ -110,21 +108,29 @@ var FormApp = (function () {
       var idx = s.stepIndex - 1;
       if (idx > 0 && s.steps[idx].kind === "transition") idx -= 1;
       if (idx < 0) idx = 0;
-      return { stepIndex: idx, niceOneLabel: null, pendingOtherStep: null, pendingOtherOption: null };
+      return { stepIndex: idx, niceOneLabel: null };
     });
   };
 
   P.endNow = function () {
     this.setState(function (s) {
       var idx = s.steps.findIndex(function (x) { return x.key === "final_ask"; });
-      return { stepIndex: idx < 0 ? s.stepIndex : idx, niceOneLabel: null, pendingOtherStep: null, pendingOtherOption: null };
+      return { stepIndex: idx < 0 ? s.stepIndex : idx, niceOneLabel: null };
     });
   };
 
+  // Toggling a real pick clears any opt-out for this step, and vice versa —
+  // "Don't eat X" is mutually exclusive with actual brand picks.
   P.toggleMulti = function (step, optId) {
     this.setState(function (s) {
+      var opt = (step.options || []).find(function (o) { return o.id === optId; });
       var cur = new Set(s.answers[step.key] || []);
-      if (cur.has(optId)) cur.delete(optId); else cur.add(optId);
+      if (opt && opt.optOut) {
+        if (cur.has(optId)) cur.delete(optId); else { cur.clear(); cur.add(optId); }
+      } else {
+        (step.options || []).forEach(function (o) { if (o.optOut) cur.delete(o.id); });
+        if (cur.has(optId)) cur.delete(optId); else cur.add(optId);
+      }
       var answers = Object.assign({}, s.answers);
       answers[step.key] = Array.from(cur);
       return { answers: answers };
@@ -132,11 +138,20 @@ var FormApp = (function () {
   };
 
   P.continueMulti = function (step, clear) {
-    var self = this;
+    var otherNote = null;
+    if (!clear) {
+      var otherInputEl = document.getElementById("other-input");
+      if (otherInputEl) otherNote = otherInputEl.value;
+    }
     this.setState(function (s) {
       var steps = s.steps;
       var answers = Object.assign({}, s.answers);
-      if (clear) answers[step.key] = [];
+      if (clear) {
+        answers[step.key] = [];
+        delete answers[step.key + "__other"];
+      } else if (otherNote !== null) {
+        answers[step.key + "__other"] = otherNote;
+      }
       if (step.key === "interests") {
         var sel = clear ? [] : (answers.interests || []);
         var alreadySpliced = steps.some(function (x) { return x.branchInserted; });
@@ -151,25 +166,14 @@ var FormApp = (function () {
   };
 
   P.selectSingle = function (step, opt) {
-    if (opt.needsInput) {
-      this.setState({ pendingOtherStep: step.key, pendingOtherOption: opt.id });
-      return;
-    }
     this.commit(step, opt.id);
   };
 
   P.commit = function (step, value) {
     var answers = Object.assign({}, this.state.answers);
     answers[step.key] = value;
-    this.setState({ answers: answers, pendingOtherStep: null, pendingOtherOption: null });
+    this.setState({ answers: answers });
     this.afterAnswer(step);
-  };
-
-  P.confirmOther = function () {
-    var step = this.getStep(this.state.pendingOtherStep);
-    if (!step) return;
-    var inputEl = document.getElementById("other-input");
-    this.commit(step, { optionId: this.state.pendingOtherOption, note: inputEl ? inputEl.value : "" });
   };
 
   P.afterAnswer = function (step) {
@@ -190,20 +194,39 @@ var FormApp = (function () {
 
   P.skipCurrent = function (step) {
     if (step.multi) { this.continueMulti(step, true); return; }
-    if (step.kind === "names") { this.goNext(); return; }
     var answers = Object.assign({}, this.state.answers);
     answers[step.key] = undefined;
-    this.setState({ answers: answers, pendingOtherStep: null, pendingOtherOption: null });
+    this.setState({ answers: answers });
     this.afterAnswer(step);
   };
 
+  // Name is optional; mobile number is required to proceed past the
+  // checkpoint. Validation runs without a full re-render so a failed
+  // attempt never wipes what the user already typed.
   P.continueNames = function () {
     var nameEl = document.getElementById("name-input");
     var phoneEl = document.getElementById("phone-input");
+    var phoneRaw = phoneEl ? phoneEl.value.trim() : "";
+    var digits = phoneRaw.replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 13) {
+      this.showFieldError(phoneEl, digits.length === 0 ? "Mobile number is required." : "Enter a valid mobile number.");
+      return;
+    }
     var answers = Object.assign({}, this.state.answers);
-    answers.checkpoint = { name: nameEl ? nameEl.value : "", phone: phoneEl ? phoneEl.value : "" };
+    answers.checkpoint = { name: nameEl ? nameEl.value.trim() : "", phone: phoneRaw };
     this.setState({ answers: answers });
     this.goNext();
+  };
+
+  P.showFieldError = function (fieldEl, message) {
+    var errEl = document.getElementById("phone-error");
+    if (errEl) errEl.textContent = message;
+    if (!fieldEl) return;
+    fieldEl.classList.add("input-error");
+    fieldEl.classList.remove("shake");
+    void fieldEl.offsetWidth; // restart the shake animation on repeat failures
+    fieldEl.classList.add("shake");
+    fieldEl.focus();
   };
 
   P.addChip = function (text) {
@@ -218,6 +241,7 @@ var FormApp = (function () {
     var ta = document.getElementById("final-textarea");
     var answers = Object.assign({}, this.state.answers);
     answers.final_ask = ta ? ta.value : "";
+    if (window.Submission) window.Submission.send("Complete", answers, answers.checkpoint);
     this.setState({ answers: answers });
     this.goNext();
   };
@@ -225,10 +249,10 @@ var FormApp = (function () {
   P.restart = function () {
     clearTimeout(this._autoT);
     clearTimeout(this._niceT);
-    this.setState({
-      steps: buildInitialSteps(), stepIndex: 0, answers: {},
-      pendingOtherStep: null, pendingOtherOption: null, niceOneLabel: null,
-    });
+    this._startSent = false;
+    this._lastStepKey = null;
+    this._lastPct = null;
+    this.setState({ steps: buildInitialSteps(), stepIndex: 0, answers: {}, niceOneLabel: null });
   };
 
   P.handleClick = function (e) {
@@ -245,7 +269,6 @@ var FormApp = (function () {
         if (step.multi) this.toggleMulti(step, opt.id); else this.selectSingle(step, opt);
         break;
       }
-      case "confirm-other": this.confirmOther(); break;
       case "continue-multi": this.continueMulti(step, false); break;
       case "skip": this.skipCurrent(step); break;
       case "continue-names": this.continueNames(); break;
@@ -266,18 +289,37 @@ var FormApp = (function () {
     var showEndNow = gateIdx >= 0 && s.stepIndex >= gateIdx && step.kind !== "end" && step.kind !== "final";
     var pct = Math.min(100, Math.round((s.stepIndex / (s.steps.length - 1)) * 100));
 
+    var isNewStep = step.key !== this._lastStepKey;
+    var prevPct = this._lastPct == null ? pct : this._lastPct;
+    var renderPct = isNewStep ? prevPct : pct;
+    this._lastStepKey = step.key;
+    this._lastPct = pct;
+
     var screenHtml;
     if (step.kind === "intro") screenHtml = this.renderIntro();
     else if (step.kind === "notice") screenHtml = this.renderNotice();
     else if (step.kind === "transition") screenHtml = this.renderTransition();
-    else if (step.kind === "question") screenHtml = this.renderQuestion(step, showBack, showEndNow, pct);
-    else if (step.kind === "names") screenHtml = this.renderNames(step, showBack, pct);
-    else if (step.kind === "final") screenHtml = this.renderFinal(step, pct);
+    else if (step.kind === "question") screenHtml = this.renderQuestion(step, showBack, showEndNow, renderPct, isNewStep);
+    else if (step.kind === "names") screenHtml = this.renderNames(step, showBack, renderPct);
+    else if (step.kind === "final") screenHtml = this.renderFinal(step, renderPct);
     else if (step.kind === "end") screenHtml = this.renderEnd();
     else screenHtml = "";
 
     var overlayHtml = s.niceOneLabel ? this.renderNiceOne(s.niceOneLabel) : "";
     this.root.innerHTML = '<div class="card">' + screenHtml + overlayHtml + "</div>";
+
+    if (isNewStep) {
+      var fillEl = this.root.querySelector(".progress-fill");
+      if (fillEl) {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () { fillEl.style.width = pct + "%"; });
+        });
+      }
+      if (step.kind === "question" && !this._startSent) {
+        this._startSent = true;
+        if (window.Submission) window.Submission.send("Incomplete", {}, null);
+      }
+    }
   };
 
   P.renderIntro = function () {
@@ -318,27 +360,28 @@ var FormApp = (function () {
     );
   };
 
-  P.renderQuestion = function (step, showBack, showEndNow, pct) {
+  P.renderQuestion = function (step, showBack, showEndNow, pct, isNewStep) {
     var self = this;
     var stacked = step.key === "interests";
     var isMulti = !!step.multi;
     var rawAnswer = this.state.answers[step.key];
     var selectedArr = isMulti ? (rawAnswer || []) : [];
 
-    var optionsHtml = (step.options || []).map(function (opt) {
+    var optionsHtml = (step.options || []).map(function (opt, i) {
       var selected = isMulti
         ? selectedArr.indexOf(opt.id) !== -1
-        : (rawAnswer === opt.id || (rawAnswer && typeof rawAnswer === "object" && rawAnswer.optionId === opt.id));
-      var showInput = self.state.pendingOtherStep === step.key && self.state.pendingOtherOption === opt.id;
+        : rawAnswer === opt.id;
+      var showInput = isMulti && opt.needsInput && selected;
       var iconHtml = opt.icon ? svgUse(opt.icon, 22, 22) : "";
       var checkHtml = selected ? svgUse("check", 16, 16, "0 0 16 16", optionCheckStyle(stacked)) : "";
+      var animDelay = isNewStep ? i * 35 : null;
       var tile =
         '<div class="option-tile" data-action="select-option" data-opt-id="' + escapeHtml(opt.id) + '" style="' +
-        optionTileStyle(step, opt, selected, stacked) + '">' +
+        optionTileStyle(step, opt, selected, stacked, animDelay) + '">' +
         iconHtml + "<span>" + escapeHtml(opt.label) + "</span>" + checkHtml + "</div>";
       var reveal = showInput
         ? '<div class="other-reveal"><input class="other-input" id="other-input" placeholder="' +
-          escapeHtml(opt.placeholder || "") + '"><button class="other-continue" data-action="confirm-other">Continue</button></div>'
+          escapeHtml(opt.placeholder || "") + '"></div>'
         : "";
       return tile + reveal;
     }).join("");
@@ -346,7 +389,7 @@ var FormApp = (function () {
     return (
       '<div class="screen">' +
       topRowHtml(showBack, showEndNow, pct) +
-      '<div class="q-body">' +
+      '<div class="q-body' + (isNewStep ? " step-enter" : "") + '">' +
       '<div class="section-label">' + escapeHtml(step.section) + "</div>" +
       svgUse(step.icon, 30, 30, "0 0 40 40", "color:" + ACCENT2 + ";margin-bottom:12px;display:block;") +
       '<h2 class="q-title">' + escapeHtml(step.title) + "</h2>" +
@@ -365,18 +408,19 @@ var FormApp = (function () {
     return (
       '<div class="screen">' +
       topRowHtml(showBack, false, pct) +
-      '<div class="q-body">' +
+      '<div class="q-body step-enter">' +
       svgUse("chat", 48, 48, "0 0 40 40", "color:" + ACCENT + ";margin-bottom:14px;") +
       '<h2 class="names-heading">Who\'s this for?</h2>' +
-      '<p class="names-sub">So we can tell you on WhatsApp when your order\'s ready. Totally optional.</p>' +
+      '<p class="names-sub">So we can tell you on WhatsApp when your order\'s ready. Name is optional — mobile number is required.</p>' +
       '<div class="names-fields">' +
-      '<input class="text-field" id="name-input" placeholder="Your name" autocomplete="name">' +
-      '<input class="text-field" id="phone-input" placeholder="WhatsApp number" type="tel" autocomplete="tel">' +
+      '<input class="text-field" id="name-input" placeholder="Your name (optional)" autocomplete="name">' +
+      '<div class="field-group">' +
+      '<input class="text-field" id="phone-input" placeholder="WhatsApp number *" type="tel" inputmode="tel" autocomplete="tel">' +
+      '<div class="field-error" id="phone-error"></div>' +
+      "</div>" +
       "</div></div>" +
-      '<div class="footer-multi">' +
-      '<button class="btn-primary" data-action="continue-names">Continue</button>' +
-      '<button class="skip-link" data-action="skip">Skip for now</button>' +
-      "</div></div>"
+      '<div class="names-footer"><button class="btn-primary" data-action="continue-names">Continue</button></div>' +
+      "</div>"
     );
   };
 
@@ -387,7 +431,7 @@ var FormApp = (function () {
     return (
       '<div class="screen">' +
       topRowHtml(true, false, pct) +
-      '<div class="q-body" style="padding:10px 24px 20px;">' +
+      '<div class="q-body step-enter" style="padding:10px 24px 20px;">' +
       svgUse("wish", 50, 50, "0 0 40 40", "color:" + ACCENT + ";margin-bottom:14px;") +
       '<div class="final-label">Last one</div>' +
       '<h2 class="final-heading">Three things you\'d want at 30–40% off?</h2>' +
@@ -414,7 +458,7 @@ var FormApp = (function () {
   P.renderNiceOne = function (label) {
     return (
       '<div class="nice-one" data-action="dismiss-nice-one">' +
-      svgUse("leaf", 52, 52, "0 0 20 20", "color:" + ACCENT2) +
+      svgUse("leaf", 52, 52, "0 0 20 20", "color:" + ACCENT2 + ";animation:leafPop .4s cubic-bezier(.34,1.56,.64,1) both;") +
       '<div class="nice-one-label">' + escapeHtml(label) + "</div>" +
       "</div>"
     );

@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/((?!data.js|submit.js|app.js|style.css).*)", "destination": "/index.html" }
+  ]
+}

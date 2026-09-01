@@ -58,6 +58,30 @@ input, textarea {
   from { opacity: 0; transform: scale(0.86); }
   to { opacity: 1; transform: scale(1); }
 }
+@keyframes tileIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes checkPop {
+  0% { transform: scale(0); }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+@keyframes leafPop {
+  0% { transform: scale(0.4) rotate(-8deg); }
+  60% { transform: scale(1.15) rotate(4deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+@keyframes leafBob {
+  0%, 100% { transform: translateY(-50%) scale(1); }
+  50% { transform: translateY(-55%) scale(1.15); }
+}
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
 
 .app {
   min-height: 100dvh;
@@ -155,8 +179,9 @@ input, textarea {
   font-weight: 700;
   flex-shrink: 0;
   box-shadow: 0 10px 24px -8px rgba(193, 96, 47, 0.5);
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
-.btn-primary:hover { opacity: 0.92; }
+.btn-primary:hover { opacity: 0.92; transform: translateY(-1px); }
 .btn-primary:active { transform: scale(0.98); }
 .btn-primary.btn-plain {
   box-shadow: none;
@@ -238,6 +263,7 @@ input, textarea {
   top: 50%;
   transform: translateY(-50%);
   color: var(--accent2);
+  animation: leafBob 1.8s ease-in-out infinite;
 }
 
 .end-now {
@@ -258,6 +284,7 @@ input, textarea {
   min-height: 0;
   box-sizing: border-box;
 }
+.q-body.step-enter { animation: fadeUp 0.28s ease both; }
 .section-label {
   font-family: Karla, sans-serif;
   font-size: 11.5px;
@@ -295,9 +322,11 @@ input, textarea {
   cursor: pointer;
   position: relative;
   box-sizing: border-box;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
 .option-tile svg { flex-shrink: 0; }
+.option-tile:hover { transform: translateY(-2px); }
+.option-tile:active { transform: scale(0.97); }
 
 .other-reveal {
   flex: 0 0 100%;
@@ -316,16 +345,7 @@ input, textarea {
   background: var(--input-bg);
   color: var(--ink);
   outline: none;
-}
-.other-continue {
-  padding: 14px 18px;
-  border-radius: 14px;
-  background: var(--accent);
-  color: var(--input-bg);
-  font-family: Karla, sans-serif;
-  font-weight: 600;
-  font-size: 14px;
-  flex-shrink: 0;
+  width: 100%;
 }
 
 .footer-multi {
@@ -380,7 +400,22 @@ input, textarea {
   color: var(--ink);
   outline: none;
   width: 100%;
+  transition: border-color 0.15s ease;
 }
+.text-field.input-error {
+  border-color: #B3423A;
+  background: rgba(179, 66, 58, 0.05);
+}
+.text-field.shake { animation: shake 0.4s ease; }
+.field-group { display: flex; flex-direction: column; gap: 6px; }
+.field-error {
+  font-family: Karla, sans-serif;
+  font-size: 12.5px;
+  color: #B3423A;
+  min-height: 15px;
+  padding-left: 4px;
+}
+.names-footer { padding: 12px 24px 30px; flex-shrink: 0; box-sizing: border-box; }
 
 /* Final ask screen */
 .final-label {
