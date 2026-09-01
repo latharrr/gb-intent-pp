@@ -4,7 +4,7 @@
 // do, submissions are simply skipped (no error, no data lost visibly, the
 // form just doesn't have anywhere to send it yet). See google-apps-script.gs
 // and SHEETS_SETUP.md in this folder for the one-time setup.
-var SHEETS_ENDPOINT_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+var SHEETS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbywOF6A--aNpz2xgU1152MlClLgPqeQqUGSuIROfuW8LCoiqHcZMQuHeorAGKdYT_LdqA/exec";
 
 (function () {
   "use strict";
